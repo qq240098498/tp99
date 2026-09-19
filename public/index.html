@@ -57,6 +57,21 @@
       </div>
       <p class="empty-tip hidden" id="rule-empty">当前筛选条件下没有规则</p>
 
+      <div class="rule-detail hidden" id="rule-detail">
+        <div class="detail-head">
+          <h3 id="rule-detail-title">规则详情</h3>
+          <button type="button" class="ghost" id="rule-detail-close">收起</button>
+        </div>
+        <dl class="detail-grid" id="rule-detail-info"></dl>
+        <div class="history-head">
+          <h4>改动记录（<span id="history-count">0</span> 条，从新到旧）</h4>
+          <button type="button" class="ghost" id="history-compare" disabled>对比所选两条</button>
+        </div>
+        <p class="empty-tip hidden" id="history-empty">这条规则还没有改动记录</p>
+        <ul class="history-list" id="history-list"></ul>
+        <div class="compare-result hidden" id="compare-result"></div>
+      </div>
+
       <form class="entry-form hidden" id="rule-form" autocomplete="off">
         <h3 id="rule-form-title">新建规则</h3>
         <div class="form-row">

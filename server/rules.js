@@ -1,5 +1,5 @@
 const crypto = require('crypto');
-const { load, save, LEVELS, STATUSES, FILE_TYPES, MAX_CODE_LENGTH, MAX_RULE_NAME_LENGTH, MAX_PATTERN_LENGTH, MAX_NOTE_LENGTH } = require('./store');
+const { load, save, snapshotRule, LEVELS, STATUSES, FILE_TYPES, MAX_CODE_LENGTH, MAX_RULE_NAME_LENGTH, MAX_PATTERN_LENGTH, MAX_NOTE_LENGTH } = require('./store');
 const { ApiError, pickText } = require('./errors');
 
 // 规则编码固定成大写字母加分段的数字，方便在命中清单里引用
@@ -80,6 +80,29 @@ function sortRules(list) {
   });
 }
 
+// 改动记录按时刻从新到旧排，同一时刻后写下的排前面
+function sortHistory(list) {
+  return (Array.isArray(list) ? list : [])
+    .map((item, index) => ({ item, index }))
+    .sort((a, b) => {
+      if (a.item.changedAt !== b.item.changedAt) return a.item.changedAt < b.item.changedAt ? 1 : -1;
+      return b.index - a.index;
+    })
+    .map((entry) => entry.item);
+}
+
+// 每次保存都留一条改动记录：时刻、改动前内容与改动后内容；新建的那一条没有改动前内容
+function recordHistory(rule, before, changedAt) {
+  const history = Array.isArray(rule.history) ? rule.history : [];
+  history.push({
+    id: crypto.randomUUID(),
+    changedAt,
+    before: before || null,
+    after: snapshotRule(rule),
+  });
+  rule.history = history;
+}
+
 // 规则清单：按级别、状态、适用文件类型筛选，再按编码、名称或匹配写法搜索
 function listRules(options) {
   const input = options && typeof options === 'object' ? options : {};
@@ -101,7 +124,10 @@ function listRules(options) {
 
   const usedFileTypes = Array.from(new Set(data.rules.map((item) => item.fileType)));
   return {
-    rules: sortRules(list),
+    rules: sortRules(list).map((item) => {
+      const { history, ...rest } = item;
+      return rest;
+    }),
     levels: LEVELS.slice(),
     statuses: STATUSES.slice(),
     fileTypes: FILE_TYPES.slice(),
@@ -113,7 +139,7 @@ function getRule(id) {
   const data = load();
   const found = data.rules.find((item) => item.id === id);
   if (!found) throw new ApiError(404, 'RULE_NOT_FOUND', '这条规则不存在或已被删除', '');
-  return found;
+  return { ...found, history: sortHistory(found.history) };
 }
 
 function createRule(payload) {
@@ -131,10 +157,12 @@ function createRule(payload) {
     note: validateNote(input.note),
     createdAt: now,
     updatedAt: now,
+    history: [],
   };
+  recordHistory(created, null, now);
   data.rules.push(created);
   save(data);
-  return created;
+  return { ...created, history: sortHistory(created.history) };
 }
 
 function updateRule(id, payload) {
@@ -143,6 +171,7 @@ function updateRule(id, payload) {
   const found = data.rules.find((item) => item.id === id);
   if (!found) throw new ApiError(404, 'RULE_NOT_FOUND', '这条规则不存在或已被删除', '');
 
+  const before = snapshotRule(found);
   found.code = input.code === undefined ? found.code : validateCode(input.code, data, found.id);
   found.name = input.name === undefined ? found.name : validateName(input.name);
   found.level = input.level === undefined ? found.level : validateLevel(input.level);
@@ -150,9 +179,11 @@ function updateRule(id, payload) {
   found.fileType = input.fileType === undefined ? found.fileType : validateFileType(input.fileType);
   found.pattern = input.pattern === undefined ? found.pattern : validatePattern(input.pattern);
   found.note = input.note === undefined ? found.note : validateNote(input.note);
-  found.updatedAt = new Date().toISOString();
+  const now = new Date().toISOString();
+  found.updatedAt = now;
+  recordHistory(found, before, now);
   save(data);
-  return found;
+  return { ...found, history: sortHistory(found.history) };
 }
 
 function deleteRule(id) {

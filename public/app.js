@@ -12,7 +12,21 @@ const state = {
   editingRuleId: '',
   editingFileId: '',
   lastScan: null,
+  detailRule: null,
+  expandedHistory: [],
+  pickedHistory: [],
+  compareOn: false,
 };
+
+// 改动记录里逐项展示与对比的六个字段，与后端的快照口径一致
+const HISTORY_FIELD_DEFS = [
+  { key: 'code', label: '编码', mono: true },
+  { key: 'name', label: '名称' },
+  { key: 'level', label: '级别' },
+  { key: 'status', label: '状态' },
+  { key: 'fileType', label: '适用文件类型' },
+  { key: 'pattern', label: '匹配写法', mono: true },
+];
 
 const el = (id) => document.getElementById(id);
 
@@ -222,11 +236,128 @@ function renderRules() {
       <td class="note-cell">${escapeHtml(item.note)}</td>
       <td class="mono">${escapeHtml(formatTime(item.updatedAt))}</td>
       <td class="actions">
+        <button type="button" class="link" data-rule-detail="${escapeHtml(item.id)}">详情</button>
         <button type="button" class="link" data-rule-edit="${escapeHtml(item.id)}">编辑</button>
         <button type="button" class="link danger" data-rule-delete="${escapeHtml(item.id)}">删除</button>
       </td>
     </tr>`).join('');
   el('rule-empty').classList.toggle('hidden', state.rules.length > 0);
+}
+
+// 一条改动记录的摘要：新建写明是新建，修改列出改了哪几项
+function historyEntrySummary(entry) {
+  if (!entry.before) return '新建，登记了完整内容';
+  const changed = HISTORY_FIELD_DEFS.filter((f) => entry.before[f.key] !== entry.after[f.key]);
+  if (!changed.length) return '这次保存没有改动内容';
+  return `${changed.map((f) => f.label).join('、')} 有改动`;
+}
+
+// 展开一条记录：逐项列出保存下来的完整内容，有改动的项写清前后
+function historyFullHtml(entry) {
+  return HISTORY_FIELD_DEFS.map((f) => {
+    const after = entry.after[f.key];
+    if (!entry.before) {
+      return `<div class="his-row"><span class="his-label">${f.label}</span><span class="${f.mono ? 'mono' : ''}">${escapeHtml(after)}</span></div>`;
+    }
+    const before = entry.before[f.key];
+    if (before === after) {
+      return `<div class="his-row"><span class="his-label">${f.label}</span><span class="${f.mono ? 'mono' : ''}">${escapeHtml(after)}</span><span class="his-same">（未变）</span></div>`;
+    }
+    return `<div class="his-row changed"><span class="his-label">${f.label}</span><span class="${f.mono ? 'mono' : ''}">${escapeHtml(before)} → ${escapeHtml(after)}</span></div>`;
+  }).join('');
+}
+
+// 选中的两条记录按时刻从早到晚排，对比时按"从早期的变成近期的"来描述
+function pickedPair() {
+  const history = (state.detailRule && state.detailRule.history) || [];
+  const picked = history.filter((entry) => state.pickedHistory.includes(entry.id));
+  return picked.sort((a, b) => {
+    if (a.changedAt !== b.changedAt) return a.changedAt < b.changedAt ? -1 : 1;
+    return history.indexOf(b) - history.indexOf(a);
+  });
+}
+
+function renderCompare() {
+  const box = el('compare-result');
+  if (!state.compareOn || state.pickedHistory.length !== 2) {
+    box.classList.add('hidden');
+    box.innerHTML = '';
+    return;
+  }
+  const [older, newer] = pickedPair();
+  const rows = HISTORY_FIELD_DEFS.map((f) => {
+    const from = older.after[f.key];
+    const to = newer.after[f.key];
+    if (from === to) {
+      return `<div class="compare-row"><span class="his-label">${f.label}</span><span>一致，都是 ${escapeHtml(from)}</span></div>`;
+    }
+    return `<div class="compare-row changed"><span class="his-label">${f.label}</span><span>从 ${escapeHtml(from)} 变成 ${escapeHtml(to)}</span></div>`;
+  }).join('');
+  box.innerHTML = `<div class="compare-title">对比 ${escapeHtml(formatTime(older.changedAt))} 与 ${escapeHtml(formatTime(newer.changedAt))} 两条记录保存的内容：</div>${rows}`;
+  box.classList.remove('hidden');
+}
+
+function renderHistory() {
+  const history = (state.detailRule && Array.isArray(state.detailRule.history)) ? state.detailRule.history : [];
+  el('history-count').textContent = String(history.length);
+  el('history-empty').classList.toggle('hidden', history.length > 0);
+  el('history-list').innerHTML = history.map((entry) => {
+    const expanded = state.expandedHistory.includes(entry.id);
+    const picked = state.pickedHistory.includes(entry.id);
+    return `<li class="history-item">
+      <div class="history-line">
+        <input type="checkbox" data-his-pick="${escapeHtml(entry.id)}" ${picked ? 'checked' : ''} title="选中两条后可对比">
+        <span class="mono history-time">${escapeHtml(formatTime(entry.changedAt) || '时刻未知')}</span>
+        <span class="tag ${entry.before ? 'lv-hint' : 'lv-warn'}">${entry.before ? '修改' : '新建'}</span>
+        <span class="history-summary">${escapeHtml(historyEntrySummary(entry))}</span>
+        <button type="button" class="link" data-his-toggle="${escapeHtml(entry.id)}">${expanded ? '收起' : '展开'}</button>
+      </div>
+      ${expanded ? `<div class="history-full">${historyFullHtml(entry)}</div>` : ''}
+    </li>`;
+  }).join('');
+  el('history-compare').disabled = state.pickedHistory.length !== 2;
+  renderCompare();
+}
+
+function renderRuleDetail() {
+  const rule = state.detailRule;
+  if (!rule) return;
+  el('rule-detail-title').textContent = `规则详情：${rule.code} ${rule.name}`;
+  el('rule-detail-info').innerHTML = [
+    ['编码', rule.code, true],
+    ['名称', rule.name],
+    ['级别', rule.level],
+    ['状态', rule.status],
+    ['适用文件类型', rule.fileType],
+    ['匹配写法', rule.pattern, true],
+    ['说明', rule.note || '（空）'],
+    ['创建时间', formatTime(rule.createdAt), true],
+    ['更新时间', formatTime(rule.updatedAt), true],
+  ].map(([label, value, mono]) => `<div class="detail-item"><dt>${label}</dt><dd class="${mono ? 'mono' : ''}">${escapeHtml(value)}</dd></div>`).join('');
+  renderHistory();
+  el('rule-detail').classList.remove('hidden');
+}
+
+async function showRuleDetail(id) {
+  clearNotice();
+  try {
+    const rule = await request(`/api/rules/${encodeURIComponent(id)}`);
+    state.detailRule = rule;
+    state.expandedHistory = [];
+    state.pickedHistory = [];
+    state.compareOn = false;
+    renderRuleDetail();
+  } catch (err) {
+    notify(err.message, 'error');
+  }
+}
+
+function closeRuleDetail() {
+  state.detailRule = null;
+  state.expandedHistory = [];
+  state.pickedHistory = [];
+  state.compareOn = false;
+  el('rule-detail').classList.add('hidden');
 }
 
 function renderFiles() {
@@ -318,6 +449,9 @@ async function submitRule(event) {
     }
     closeRuleForm();
     await loadRules();
+    if (editing && state.detailRule && state.detailRule.id === editing) {
+      await showRuleDetail(editing);
+    }
   } catch (err) {
     notify(err.message, 'error');
     markField(err.field);
@@ -412,10 +546,24 @@ document.addEventListener('click', async (event) => {
   const node = event.target.closest('button');
   if (!node) return;
 
+  if (node.dataset.ruleDetail) {
+    await showRuleDetail(node.dataset.ruleDetail);
+    return;
+  }
+
   if (node.dataset.ruleEdit) {
     clearNotice();
     const found = state.rules.find((item) => item.id === node.dataset.ruleEdit);
     if (found) openRuleForm(found);
+    return;
+  }
+
+  if (node.dataset.hisToggle) {
+    const id = node.dataset.hisToggle;
+    state.expandedHistory = state.expandedHistory.includes(id)
+      ? state.expandedHistory.filter((item) => item !== id)
+      : [...state.expandedHistory, id];
+    renderHistory();
     return;
   }
 
@@ -426,6 +574,7 @@ document.addEventListener('click', async (event) => {
     try {
       await request(`/api/rules/${encodeURIComponent(node.dataset.ruleDelete)}`, { method: 'DELETE' });
       if (state.editingRuleId === node.dataset.ruleDelete) closeRuleForm();
+      if (state.detailRule && state.detailRule.id === node.dataset.ruleDelete) closeRuleDetail();
       notify('规则已删除', 'ok');
       await loadRules();
     } catch (err) {
@@ -466,6 +615,21 @@ document.addEventListener('click', async (event) => {
   }
 });
 
+// 改动记录的勾选框：最多留两条，选中第三条时把最早选的那条退掉
+document.addEventListener('change', (event) => {
+  const node = event.target;
+  if (!(node instanceof HTMLInputElement) || !node.dataset.hisPick) return;
+  const id = node.dataset.hisPick;
+  if (node.checked) {
+    state.pickedHistory = state.pickedHistory.filter((item) => item !== id);
+    state.pickedHistory.push(id);
+    if (state.pickedHistory.length > 2) state.pickedHistory.shift();
+  } else {
+    state.pickedHistory = state.pickedHistory.filter((item) => item !== id);
+  }
+  renderHistory();
+});
+
 el('rule-form').addEventListener('submit', submitRule);
 el('file-form').addEventListener('submit', submitFile);
 el('rule-new').addEventListener('click', () => {
@@ -473,6 +637,11 @@ el('rule-new').addEventListener('click', () => {
   openRuleForm(null);
 });
 el('rule-cancel').addEventListener('click', closeRuleForm);
+el('rule-detail-close').addEventListener('click', closeRuleDetail);
+el('history-compare').addEventListener('click', () => {
+  state.compareOn = true;
+  renderCompare();
+});
 el('file-new').addEventListener('click', () => {
   clearNotice();
   openFileForm(null);

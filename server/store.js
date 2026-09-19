@@ -295,6 +295,56 @@ function seedFiles() {
   ];
 }
 
+// 改动记录里留存的六个字段：编码、名称、级别、状态、适用文件类型与匹配写法
+const HISTORY_FIELDS = ['code', 'name', 'level', 'status', 'fileType', 'pattern'];
+
+// 把规则当前内容整理成一条快照，改动记录的前后内容都用这个结构
+function snapshotRule(rule) {
+  return {
+    code: rule.code,
+    name: rule.name,
+    level: rule.level,
+    status: rule.status,
+    fileType: rule.fileType,
+    pattern: rule.pattern,
+  };
+}
+
+// 清洗一条快照：不是对象的一律当作没有（新建规则的第一条记录就没有改动前内容）
+function normalizeSnapshot(value) {
+  if (!value || typeof value !== 'object') return null;
+  return {
+    code: typeof value.code === 'string' ? value.code : '',
+    name: typeof value.name === 'string' ? value.name : '',
+    level: LEVELS.includes(value.level) ? value.level : LEVELS[0],
+    status: STATUSES.includes(value.status) ? value.status : STATUSES[0],
+    fileType: FILE_TYPES.includes(value.fileType) ? value.fileType : FILE_TYPES[0],
+    pattern: typeof value.pattern === 'string' ? value.pattern : '',
+  };
+}
+
+// 每条改动记录：改动时刻、改动前内容与改动后内容；缺改动后内容的记录没有留档价值，直接丢掉
+function normalizeHistory(list) {
+  if (!Array.isArray(list)) return [];
+  const seen = new Set();
+  const out = [];
+  list.forEach((item, index) => {
+    const source = item && typeof item === 'object' ? item : {};
+    const after = normalizeSnapshot(source.after);
+    if (!after || !after.code) return;
+    const id = typeof source.id === 'string' && source.id ? source.id : `his-restored-${index + 1}`;
+    if (seen.has(id)) return;
+    seen.add(id);
+    out.push({
+      id,
+      changedAt: typeof source.changedAt === 'string' ? source.changedAt : '',
+      before: normalizeSnapshot(source.before),
+      after,
+    });
+  });
+  return out;
+}
+
 // 把单条规则整理成固定结构，级别与状态不认识的一律回到默认值
 function normalizeRule(item, fallbackIndex) {
   const source = item && typeof item === 'object' ? item : {};
@@ -313,6 +363,7 @@ function normalizeRule(item, fallbackIndex) {
     note: typeof source.note === 'string' ? source.note : '',
     createdAt,
     updatedAt: typeof source.updatedAt === 'string' && source.updatedAt ? source.updatedAt : createdAt,
+    history: normalizeHistory(source.history),
   };
 }
 
@@ -399,6 +450,8 @@ module.exports = {
   normalize,
   normalizeRule,
   normalizeFile,
+  snapshotRule,
+  HISTORY_FIELDS,
   LEVELS,
   STATUSES,
   FILE_TYPES,
