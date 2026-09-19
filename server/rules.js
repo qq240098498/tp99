@@ -80,6 +80,30 @@ function sortRules(list) {
   });
 }
 
+// 改动记录只留这六项，跟页面上逐项对比的口径一致
+function snapshotOf(rule) {
+  return {
+    code: rule.code,
+    name: rule.name,
+    level: rule.level,
+    status: rule.status,
+    fileType: rule.fileType,
+    pattern: rule.pattern,
+  };
+}
+
+// 每次保存规则都留一条改动记录：时刻取这次保存的更新时间，新建的记录没有改动前
+function recordHistory(data, rule, before) {
+  if (!Array.isArray(data.ruleHistory)) data.ruleHistory = [];
+  data.ruleHistory.push({
+    id: crypto.randomUUID(),
+    ruleId: rule.id,
+    changedAt: rule.updatedAt,
+    before,
+    after: snapshotOf(rule),
+  });
+}
+
 // 规则清单：按级别、状态、适用文件类型筛选，再按编码、名称或匹配写法搜索
 function listRules(options) {
   const input = options && typeof options === 'object' ? options : {};
@@ -133,6 +157,7 @@ function createRule(payload) {
     updatedAt: now,
   };
   data.rules.push(created);
+  recordHistory(data, created, null);
   save(data);
   return created;
 }
@@ -143,6 +168,7 @@ function updateRule(id, payload) {
   const found = data.rules.find((item) => item.id === id);
   if (!found) throw new ApiError(404, 'RULE_NOT_FOUND', '这条规则不存在或已被删除', '');
 
+  const before = snapshotOf(found);
   found.code = input.code === undefined ? found.code : validateCode(input.code, data, found.id);
   found.name = input.name === undefined ? found.name : validateName(input.name);
   found.level = input.level === undefined ? found.level : validateLevel(input.level);
@@ -151,6 +177,7 @@ function updateRule(id, payload) {
   found.pattern = input.pattern === undefined ? found.pattern : validatePattern(input.pattern);
   found.note = input.note === undefined ? found.note : validateNote(input.note);
   found.updatedAt = new Date().toISOString();
+  recordHistory(data, found, before);
   save(data);
   return found;
 }
@@ -160,8 +187,25 @@ function deleteRule(id) {
   const index = data.rules.findIndex((item) => item.id === id);
   if (index === -1) throw new ApiError(404, 'RULE_NOT_FOUND', '这条规则不存在或已被删除', '');
   const [removed] = data.rules.splice(index, 1);
+  data.ruleHistory = data.ruleHistory.filter((item) => item.ruleId !== id);
   save(data);
   return { id: removed.id, code: removed.code, name: removed.name };
+}
+
+// 一条规则的改动记录：按时刻从新到旧给出，同一时刻后保存的排在前面
+function listRuleHistory(id) {
+  const data = load();
+  const found = data.rules.find((item) => item.id === id);
+  if (!found) throw new ApiError(404, 'RULE_NOT_FOUND', '这条规则不存在或已被删除', '');
+  const records = data.ruleHistory
+    .map((item, index) => ({ item, index }))
+    .filter((entry) => entry.item.ruleId === id)
+    .sort((a, b) => {
+      if (a.item.changedAt !== b.item.changedAt) return a.item.changedAt < b.item.changedAt ? 1 : -1;
+      return b.index - a.index;
+    })
+    .map((entry) => entry.item);
+  return { records };
 }
 
 module.exports = {
@@ -170,4 +214,5 @@ module.exports = {
   createRule,
   updateRule,
   deleteRule,
+  listRuleHistory,
 };

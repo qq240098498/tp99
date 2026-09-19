@@ -38,6 +38,15 @@ app.get('/api/rules/:id', (req, res) => {
   }
 });
 
+// 一条规则的改动记录，按时刻从新到旧返回
+app.get('/api/rules/:id/history', (req, res) => {
+  try {
+    res.json(api.listRuleHistory(req.params.id));
+  } catch (err) {
+    sendError(res, err);
+  }
+});
+
 app.patch('/api/rules/:id', (req, res) => {
   try {
     res.json(api.updateRule(req.params.id, req.body));

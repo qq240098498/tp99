@@ -12,7 +12,22 @@ const state = {
   editingRuleId: '',
   editingFileId: '',
   lastScan: null,
+  detailRuleId: '',
+  detailRule: null,
+  history: [],
+  historySelected: [],
+  historyOpen: {},
 };
+
+// 改动记录与对比都只盯这六项，跟服务端保存的快照口径一致
+const HISTORY_FIELDS = [
+  { key: 'code', label: '编码' },
+  { key: 'name', label: '名称' },
+  { key: 'level', label: '级别' },
+  { key: 'status', label: '状态' },
+  { key: 'fileType', label: '适用文件类型' },
+  { key: 'pattern', label: '匹配写法' },
+];
 
 const el = (id) => document.getElementById(id);
 
@@ -80,6 +95,15 @@ function formatTime(value) {
   if (Number.isNaN(date.getTime())) return value;
   const pad = (num) => String(num).padStart(2, '0');
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
+
+// 改动记录的时刻精确到秒，一分钟内保存多次也分得开
+function formatExactTime(value) {
+  if (!value) return '';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  const pad = (num) => String(num).padStart(2, '0');
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
 }
 
 function levelClass(level) {

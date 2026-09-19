@@ -316,6 +316,33 @@ function normalizeRule(item, fallbackIndex) {
   };
 }
 
+// 改动记录里保存的快照只留六项：编码、名称、级别、状态、适用文件类型与匹配写法
+function normalizeSnapshot(value) {
+  if (!value || typeof value !== 'object') return null;
+  return {
+    code: typeof value.code === 'string' ? value.code : '',
+    name: typeof value.name === 'string' ? value.name : '',
+    level: typeof value.level === 'string' ? value.level : '',
+    status: typeof value.status === 'string' ? value.status : '',
+    fileType: typeof value.fileType === 'string' ? value.fileType : '',
+    pattern: typeof value.pattern === 'string' ? value.pattern : '',
+  };
+}
+
+// 单条改动记录：必须能对应到规则、有改动时刻、有保存下来的内容，缺了一律丢掉
+function normalizeHistoryEntry(item, fallbackIndex) {
+  const source = item && typeof item === 'object' ? item : {};
+  const after = normalizeSnapshot(source.after);
+  if (!after) return null;
+  return {
+    id: typeof source.id === 'string' && source.id ? source.id : `history-restored-${fallbackIndex + 1}`,
+    ruleId: typeof source.ruleId === 'string' ? source.ruleId : '',
+    changedAt: typeof source.changedAt === 'string' && source.changedAt ? source.changedAt : new Date().toISOString(),
+    before: normalizeSnapshot(source.before),
+    after,
+  };
+}
+
 // 把单个文件整理成固定结构，类型不在清单里的一律从路径后缀推断
 function normalizeFile(item, fallbackIndex) {
   const source = item && typeof item === 'object' ? item : {};
@@ -335,7 +362,8 @@ function normalizeFile(item, fallbackIndex) {
   };
 }
 
-// 整份数据保证规则与文件结构一致，缺编号、缺名称、缺路径的条目一律丢掉
+// 整份数据保证规则、文件与改动记录结构一致，缺编号、缺名称、缺路径的条目一律丢掉，
+// 改动记录里对应不上现有规则的也一并清掉
 function normalize(raw) {
   const source = raw && typeof raw === 'object' ? raw : {};
   const seed = { rules: seedRules(), files: seedFiles() };
@@ -368,7 +396,19 @@ function normalize(raw) {
     files.push(file);
   });
 
-  return { rules, files };
+  const ruleIds = new Set(rules.map((item) => item.id));
+  const rawHistory = Array.isArray(source.ruleHistory) ? source.ruleHistory : [];
+  const seenHistoryIds = new Set();
+  const ruleHistory = [];
+  rawHistory.forEach((item, index) => {
+    const entry = normalizeHistoryEntry(item, index);
+    if (!entry || !entry.ruleId || !ruleIds.has(entry.ruleId)) return;
+    if (seenHistoryIds.has(entry.id)) return;
+    seenHistoryIds.add(entry.id);
+    ruleHistory.push(entry);
+  });
+
+  return { rules, files, ruleHistory };
 }
 
 // 读取数据文件：文件缺失或内容损坏时回落到初始数据并立刻补写
@@ -377,7 +417,7 @@ function load() {
     const raw = fs.readFileSync(DATA_FILE, 'utf8');
     return normalize(JSON.parse(raw));
   } catch (err) {
-    const data = { rules: seedRules(), files: seedFiles() };
+    const data = normalize({ rules: seedRules(), files: seedFiles() });
     save(data);
     return data;
   }
